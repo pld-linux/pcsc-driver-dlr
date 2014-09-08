@@ -1,0 +1,179 @@
+--- dlr_ifd/IFD_Handler.c.orig	1999-06-12 19:18:55.000000000 +0200
++++ dlr_ifd/IFD_Handler.c	2014-09-08 18:49:51.853992730 +0200
+@@ -22,16 +22,16 @@ e-mail: fernando.llobregat@es.delarue.co
+ 
+ #include <stdio.h>
+ #include "ctapi.h"
+-#include <IFD_Handler.h>
++#include <ifdhandler.h>
+ #include <string.h>
+-#include <pcscdefines.h>
+ 
+ #define VendorName "Linux driver for DLR Readers-99\n"
+ #define IFDType "DE122/DE132\n"			
+ #define IFDVersion 0x01001111		
+ 
++static ICC_STATE ICC;
+ 
+-RESPONSECODE IO_Create_Channel ( DWORD ChannelId ) {
++RESPONSECODE IFDHCreateChannel ( DWORD Lun, DWORD ChannelId ) {
+ 
+   RESPONSECODE lRetVal = IFD_SUCCESS;
+ 
+@@ -118,7 +118,7 @@ RESPONSECODE IO_Create_Channel ( DWORD C
+ 
+ }
+ 
+-RESPONSECODE IO_Close_Channel () {
++RESPONSECODE IFDHCloseChannel (DWORD Lun) {
+ 
+   RESPONSECODE lRetVal = IFD_SUCCESS;
+ 
+@@ -138,12 +138,13 @@ RESPONSECODE IO_Close_Channel () {
+ }
+ 
+ 
+-RESPONSECODE IFD_Get_Capabilities ( DWORD Tag, BYTE Value[] ) {
++RESPONSECODE IFDHGetCapabilities ( DWORD Lun, DWORD Tag, PDWORD Length, PUCHAR Value ) {
+ 
+ 
+   RESPONSECODE lRetVal;
+   DWORD HighNibble;
+   DWORD LowNibble;
++  DEVICE_CAPABILITIES Device;
+   Device.Vendor_Name= VendorName;      	//Tag0x0100
+   Device.IFD_Type= IFDType;		//Tag0x0101
+   Device.IFD_Version= (DWORD)IFDVersion;	//Tag0x0102
+@@ -157,13 +158,15 @@ RESPONSECODE IFD_Get_Capabilities ( DWOR
+ 
+     switch (LowNibble){
+     case (0x00):
++      *Length = strlen(Device.Vendor_Name);
+       memcpy(Value,Device.Vendor_Name,strlen(Device.Vendor_Name)+1);
+       break;
+     case (0x01):
++      *Length = strlen(Device.IFD_Type);
+       memcpy(Value,Device.IFD_Type,strlen(Device.IFD_Type)+1);
+       break;
+     case (0x02):
+-
++      *Length = 5;
+       Value[3]=Device.IFD_Version; 
+       Value[2]=Device.IFD_Version>>8;
+       Value[1]=Device.IFD_Version>>16;
+@@ -192,7 +195,7 @@ RESPONSECODE IFD_Get_Capabilities ( DWOR
+ 	break;
+       case 0x01:
+ 
+-	
++	*Length = 4;
+ 	if ( IFD_Is_ICC_Present() == IFD_SUCCESS ) {
+           *(DWORD*)Value = IFD_ICC_PRESENT;
+         } else {
+@@ -203,7 +206,7 @@ RESPONSECODE IFD_Get_Capabilities ( DWOR
+ 		
+ 	break;
+       case 0x03:
+-
++	*Length = MAX_ATR_SIZE;
+         memcpy(Value, ICC.ATR, MAX_ATR_SIZE);
+         lRetVal = IFD_SUCCESS;  
+ 	
+@@ -224,7 +227,7 @@ RESPONSECODE IFD_Get_Capabilities ( DWOR
+   
+ }
+ 
+-RESPONSECODE IFD_Set_Capabilities ( DWORD Tag, BYTE Value[] ) {
++RESPONSECODE IFDHSetCapabilities ( DWORD Lun, DWORD Tag, DWORD Length, PUCHAR Value ) {
+ 
+   RESPONSECODE lRetVal;
+   DWORD HighNibble;
+@@ -270,7 +273,7 @@ RESPONSECODE IFD_Set_Capabilities ( DWOR
+ 
+ }
+ 
+-RESPONSECODE IFD_Set_Protocol_Parameters ( DWORD ProtocolType, 
++RESPONSECODE IFDHSetProtocolParameters ( DWORD Lun, DWORD ProtocolType, 
+ 					   BYTE SelectionFlags,
+ 					   BYTE PTS1, BYTE PTS2,
+ 					   BYTE PTS3 ) {
+@@ -281,7 +284,7 @@ RESPONSECODE IFD_Set_Protocol_Parameters
+ 
+ }
+ 
+-RESPONSECODE IFD_Power_ICC ( DWORD ActionRequested ) {
++RESPONSECODE IFDHPowerICC ( DWORD Lun, DWORD ActionRequested, PUCHAR Atr, PDWORD AtrLength ) {
+ 
+ 
+ 
+@@ -329,6 +332,9 @@ RESPONSECODE IFD_Power_ICC ( DWORD Actio
+ 	  ICC.ATR[i] = 0x00;
+         }
+ 	
++	memcpy( Atr, ICC.ATR, lr);
++	*AtrLength = lr;
++
+         lRetVal = IFD_SUCCESS;      
+       } else {
+         lRetVal = IFD_ERROR_POWER_ACTION;
+@@ -383,13 +389,13 @@ RESPONSECODE IFD_Confiscate_ICC() {
+ 
+ }
+ 
+-  RESPONSECODE IFD_Transmit_to_ICC ( 
+-                                     struct SCARD_IO_HEADER SendPci, 
+-                                     BYTE CommandData[],
++  RESPONSECODE IFDHTransmitToICC ( DWORD Lun,
++                                     SCARD_IO_HEADER SendPci, 
++                                     PUCHAR CommandData,
+                                      DWORD CommandSize, 
+-                                     BYTE ResponseData[], 
++                                     PUCHAR ResponseData, 
+                                      DWORD *ResponseSize, 
+-                                     struct SCARD_IO_HEADER *RecvPci  
++                                     SCARD_IO_HEADER *RecvPci  
+                                    )
+ 
+ {
+@@ -420,7 +426,7 @@ RESPONSECODE IFD_Confiscate_ICC() {
+     
+ }
+     
+-RESPONSECODE IFD_Is_ICC_Present() {
++RESPONSECODE IFDHICCPresence(DWORD Lun) {
+ 
+ 
+   RESPONSECODE TestRsp;
+--- dlr_ifd/Makefile.orig	1999-06-12 00:09:38.000000000 +0200
++++ dlr_ifd/Makefile	2014-09-08 17:11:03.204241574 +0200
+@@ -1,21 +1,22 @@
+ all: IFD_Handler_libs 
+ 
++CC=gcc
++LDFLAGS=
++CFLAGS=-g
+ 
++IFD_Handler_libs : ctapi.o serial.o IFD_Handler_DLR.so 
+ 
+-IFD_Handler_libs : ctapi.o serial.o IFD_Handler_DLR.o 
+-
+-IFD_Handler_DLR.o: IFD_Handler.c  ctapi.o serial.o
+-
+-	gcc -g -fPIC -DPIC -shared -Wl,-soname -Wl, -DDEPURANDO -I/usr/local/pcsc/include IFD_Handler.c -o IFD_Handler_DLR.o ctapi.o serial.o 
++IFD_Handler_DLR.so: IFD_Handler.c  ctapi.o serial.o
++	$(CC) $(LDFLAGS) $(CFLAGS) -fPIC -DPIC -shared -Wl,-soname -Wl,IFD_Handler_LDR.so -DDEPURANDO -I/usr/include/PCSC IFD_Handler.c -o IFD_Handler_DLR.so ctapi.o serial.o
+ 
+ ctapi.o: ctapi.c ctapi.h 
+-	gcc -g   -Wall -DDEPURANDO -I.. -c ctapi.c -o ctapi.o
++	$(CC) $(CFLAGS) -Wall -DDEPURANDO -I. -c ctapi.c -o ctapi.o
+ 
+ serial.o: serial.c serial.h
+-	gcc -g   -Wall -I.. -c serial.c -o serial.o
++	$(CC) $(CFLAGS) -Wall -I.. -c serial.c -o serial.o
+ 
+ clean:
+-	rm *.o *~ *.*~
++	rm *.o *.so *~ *.*~
+ 
+ 
+ 
